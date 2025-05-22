@@ -3,6 +3,9 @@ from tkinter import filedialog, ttk, messagebox
 from paddleocr import PaddleOCR
 import fitz  # PyMuPDF
 import os
+import GPUtil
+import subprocess
+import re
 import requests
 import json
 import pandas as pd
@@ -78,6 +81,54 @@ class InvoiceProcessor:
         # 创建主窗口
         self.setup_ui()
         self.root.mainloop()
+
+    def check_gpu_vram(self, required_vram_gb=4):
+        gpu_vram_gb = 0
+        checked_method = "N/A"
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                gpu_vram_gb = gpus[0].memoryTotal / 1024  # memoryTotal is in MB
+                checked_method = "GPUtil"
+            else: # GPUtil ran but found no GPUs, try nvidia-smi
+                raise Exception("No GPUs found by GPUtil") 
+        except Exception as e_gputil:
+            # print(f"GPUtil failed: {e_gputil}, trying nvidia-smi...") # For debugging
+            try:
+                # For Windows, prevent console window
+                cflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=memory.total', '--format=csv,noheader,nounits'],
+                    capture_output=True, text=True, check=True, creationflags=cflags
+                )
+                # Output is like "8192" (MiB), first GPU if multiple.
+                # To handle multiple GPUs, one might need to parse more carefully or average/sum.
+                # For simplicity, taking the first line if multiple are returned.
+                first_line = result.stdout.strip().split('\n')[0]
+                if first_line:
+                    gpu_vram_gb = int(first_line) / 1024 # Convert MiB to GB
+                    checked_method = "nvidia-smi"
+            except Exception as e_nvidia_smi:
+                # print(f"nvidia-smi failed: {e_nvidia_smi}") # For debugging
+                pass # Both methods failed or GPU not detected
+
+        if gpu_vram_gb > 0 and gpu_vram_gb < required_vram_gb:
+            messagebox.showwarning(
+                "Hardware Warning",
+                f"Detected {gpu_vram_gb:.1f}GB VRAM using {checked_method}. "
+                f"This is below the recommended {required_vram_gb}GB. "
+                "Performance might be affected or OCR/AI models may fail."
+            )
+        elif checked_method == "N/A": # Both methods failed to find a value
+             messagebox.showinfo(
+                "Hardware Info",
+                "Could not automatically determine GPU VRAM. "
+                "Please ensure your hardware meets model requirements if you encounter issues."
+            )
+        elif gpu_vram_gb >= required_vram_gb :
+            print(f"VRAM check: {gpu_vram_gb:.1f}GB detected via {checked_method}. Meets {required_vram_gb}GB requirement.")
+        # If gpu_vram_gb is 0 but one of the methods ran, it means 0 VRAM was reported (e.g. integrated graphics by nvidia-smi)
+        # This case is covered by the first conditional if required_vram_gb > 0
 
     def setup_ui(self):
         self.root = tk.Tk()
@@ -172,13 +223,18 @@ class InvoiceProcessor:
                 for line in result[0]:
                     text_content.append(line[1][0])
         else:
-            self.update_status("检测到可复制PDF，直接提取文本...")
-            # 直接从PDF提取文本
-            images = self.pdf_to_images(self.pdf_path)
-            for img in images:
-                result = self.ocr.ocr(img)
-                for line in result[0]:
-                    text_content.append(line[1][0])
+            self.update_status("检测到可复制PDF，正在直接提取文本...")
+            doc = fitz.open(self.pdf_path)
+            extracted_pages_text = []
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                extracted_pages_text.append(page.get_text("text"))
+            doc.close()
+            # The current OCR processing results in a list of lines.
+            # To maintain consistency for the prompt construction,
+            # split the combined text from all pages into lines.
+            full_text = "\n".join(extracted_pages_text)
+            text_content.extend(full_text.splitlines()) # Use extend to add all lines to the existing list
 
         # 保存结果到txt
         txt_path = os.path.join(work_dir, "ocr_result.txt")

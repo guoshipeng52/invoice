@@ -5,33 +5,46 @@ import json # For json.dumps in process_pdf_action
 # Custom module imports
 from app_ui import AppUI
 from ollama_client import OllamaClient
-from excel_writer import ExcelWriter # Comment cleaned, KEYS_IN_ORDER is internal to ExcelWriter
+from excel_writer import ExcelWriter
 from hardware_checker import HardwareChecker
 from pdf_handler import PDFHandler
-# config_manager will be used later if needed
+from config_manager import ConfigManager # Import ConfigManager
+
 # Unused imports (PaddleOCR, fitz, PIL, numpy, GPUtil, subprocess, re, requests) 
 # are confirmed to be removed from this file as their functionality is encapsulated
 # in their respective handler/client classes.
 
 class InvoiceProcessor: # Acts as the Controller
     def __init__(self):
+        # Initialize ConfigManager first
+        self.config_manager = ConfigManager()
+
         # Initialize UI first to display any critical init errors
         self.root = tk.Tk()
         self.root.withdraw() # Hide main window initially
         self.app_ui = AppUI(self.root, self) # Pass root and self (as controller)
 
-        # Initialize backend components
+        # Initialize backend components, passing config settings
         self.hardware_checker = HardwareChecker(app_ui=self.app_ui) # Pass AppUI instance
         try:
-            # Pass a method from app_ui to PDFHandler for status updates during its init
-            self.pdf_handler = PDFHandler(update_status_callback=self.app_ui.update_loading_status) 
+            self.pdf_handler = PDFHandler(
+                ocr_lang=self.config_manager.get_setting('ocr_lang'),
+                ocr_use_gpu=self.config_manager.get_setting('ocr_use_gpu'),
+                # Pass other OCR settings from config if PDFHandler is updated to use them
+                update_status_callback=self.app_ui.update_loading_status 
+            )
         except RuntimeError as e:
             self.app_ui.show_error_message("严重初始化错误", f"无法初始化PDF处理组件 (OCR引擎): {e}\n应用程序将无法正常工作。请检查PaddleOCR安装和环境。")
             self.root.destroy() # Close the hidden root window if init fails
             raise # Re-raise to stop execution
             
-        self.ollama_client = OllamaClient(app_ui=self.app_ui) # Pass AppUI instance
-        self.excel_writer = ExcelWriter()
+        self.ollama_client = OllamaClient(
+            api_url=self.config_manager.get_setting('ollama_api_url'),
+            model_name=self.config_manager.get_setting('ollama_model_name'),
+            # Add other relevant Ollama settings if OllamaClient will use them
+            app_ui=self.app_ui # Keep passing app_ui if it's used for messages
+        )
+        self.excel_writer = ExcelWriter() # Consider if ExcelWriter needs config (e.g. default paths)
         self.pdf_path = None # Stores the path to the currently selected PDF
         
         self.app_ui.show_loading_window(self.handle_load_model_button_action)
@@ -41,19 +54,21 @@ class InvoiceProcessor: # Acts as the Controller
         self.app_ui.enable_load_button(False)
         self.app_ui.update_loading_status("正在加载模型...")
         
+        # check_connection_and_model now uses settings passed during OllamaClient init
         if self.ollama_client.check_connection_and_model(): 
             self.app_ui.update_loading_status("模型加载成功！")
             self.root.after(1000, self.start_main_application_flow) 
         else:
-            # OllamaClient's check_connection_and_model now uses its AppUI reference for errors
             self.app_ui.update_loading_status("加载失败，请重试")
             self.app_ui.enable_load_button(True)
 
     def start_main_application_flow(self):
         self.app_ui.close_loading_window()
         # OCR is initialized in PDFHandler.__init__
-        # HardwareChecker's check_gpu_vram uses its AppUI reference
-        self.hardware_checker.check_gpu_vram() 
+        # HardwareChecker's check_gpu_vram uses its AppUI reference and config
+        self.hardware_checker.check_gpu_vram(
+            required_vram_gb=self.config_manager.get_setting('hardware_vram_threshold_gb')
+        ) 
         self.app_ui.setup_main_ui() 
         self.app_ui.update_status("等待选择文件...")
 

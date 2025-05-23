@@ -3,26 +3,33 @@ import json
 # from tkinter import messagebox # No longer directly used by OllamaClient
 
 class OllamaClient:
-    def __init__(self, api_url="http://localhost:11434/api/generate", model_name="qwen2.5:14b", app_ui_controller=None):
+    def __init__(self, api_url="http://localhost:11434/api/generate", model_name="qwen2.5:14b", app_ui=None):
+        """
+        Initializes the OllamaClient.
+        Args:
+            api_url (str): The API URL for Ollama.
+            model_name (str): The name of the Ollama model to use.
+            app_ui (AppUI, optional): An instance of the AppUI class for displaying messages.
+        """
         self.api_url = api_url
         self.model_name = model_name
-        self.app_ui = None # Will be set via set_ui_handlers by InvoiceProcessor
-        if app_ui_controller: # Direct pass from main_app's InvoiceProcessor
-            self.set_ui_handlers(app_ui_controller.app_ui.show_error_message, app_ui_controller.app_ui.show_info_message)
-
-
-    def set_ui_handlers(self, show_error_message_handler, show_info_message_handler):
-        """Allows setting UI message handlers from the main application controller."""
-        self._show_error_message = show_error_message_handler
-        self._show_info_message = show_info_message_handler
+        self.app_ui = app_ui # Store the AppUI instance
 
     def _display_error(self, title, message):
-        if hasattr(self, '_show_error_message') and callable(self._show_error_message):
-            self._show_error_message(title, message)
+        """Helper method to display errors via AppUI or print as fallback."""
+        if self.app_ui and hasattr(self.app_ui, 'show_error_message') and callable(self.app_ui.show_error_message):
+            self.app_ui.show_error_message(title, message)
         else:
-            print(f"ERROR: {title} - {message}") # Fallback if UI handler not set
+            print(f"ERROR: {title} - {message}") # Fallback if no UI handler
 
-    def check_connection_and_model(self): # Removed direct app_ui_controller pass
+    def _display_info(self, title, message):
+        """Helper method to display info via AppUI or print as fallback."""
+        if self.app_ui and hasattr(self.app_ui, 'show_info_message') and callable(self.app_ui.show_info_message):
+            self.app_ui.show_info_message(title, message)
+        else:
+            print(f"INFO: {title} - {message}") # Fallback if no UI handler
+
+    def check_connection_and_model(self):
         """
         Tests if Ollama is running and the specified model is available.
         Sends a simple test prompt to the Ollama API.
@@ -41,6 +48,7 @@ class OllamaClient:
             if response.status_code == 200:
                 return True
             else:
+                # Use the internal _display_error method
                 self._display_error("Ollama Error", f"Failed to connect to Ollama or model '{self.model_name}' not available. Status: {response.status_code}\n{response.text}")
                 return False
         except requests.exceptions.RequestException as e:
@@ -50,7 +58,7 @@ class OllamaClient:
             self._display_error("Ollama Error", f"An unexpected error occurred while checking Ollama: {str(e)}")
             return False
 
-    def extract_invoice_data_from_text(self, text_content_list, app_ui_for_errors=None): # app_ui_for_errors is for direct calls if needed
+    def extract_invoice_data_from_text(self, text_content_list): # Removed app_ui_for_errors, will use self.app_ui
         """
         Sends text content to Ollama to extract invoice data using a JSON prompt.
         Args:

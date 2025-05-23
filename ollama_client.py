@@ -1,13 +1,28 @@
 import requests
 import json
-from tkinter import messagebox # Required for error popups in check_connection_and_model
+# from tkinter import messagebox # No longer directly used by OllamaClient
 
 class OllamaClient:
-    def __init__(self, api_url="http://localhost:11434/api/generate", model_name="qwen2.5:14b"):
+    def __init__(self, api_url="http://localhost:11434/api/generate", model_name="qwen2.5:14b", app_ui_controller=None):
         self.api_url = api_url
         self.model_name = model_name
+        self.app_ui = None # Will be set via set_ui_handlers by InvoiceProcessor
+        if app_ui_controller: # Direct pass from main_app's InvoiceProcessor
+            self.set_ui_handlers(app_ui_controller.app_ui.show_error_message, app_ui_controller.app_ui.show_info_message)
 
-    def check_connection_and_model(self):
+
+    def set_ui_handlers(self, show_error_message_handler, show_info_message_handler):
+        """Allows setting UI message handlers from the main application controller."""
+        self._show_error_message = show_error_message_handler
+        self._show_info_message = show_info_message_handler
+
+    def _display_error(self, title, message):
+        if hasattr(self, '_show_error_message') and callable(self._show_error_message):
+            self._show_error_message(title, message)
+        else:
+            print(f"ERROR: {title} - {message}") # Fallback if UI handler not set
+
+    def check_connection_and_model(self): # Removed direct app_ui_controller pass
         """
         Tests if Ollama is running and the specified model is available.
         Sends a simple test prompt to the Ollama API.
@@ -26,16 +41,16 @@ class OllamaClient:
             if response.status_code == 200:
                 return True
             else:
-                messagebox.showerror("Ollama Error", f"Failed to connect to Ollama or model '{self.model_name}' not available. Status: {response.status_code}\n{response.text}")
+                self._display_error("Ollama Error", f"Failed to connect to Ollama or model '{self.model_name}' not available. Status: {response.status_code}\n{response.text}")
                 return False
         except requests.exceptions.RequestException as e:
-            messagebox.showerror("Ollama Connection Error", f"Could not connect to Ollama at {self.api_url}.\nPlease ensure Ollama is running.\nError: {str(e)}")
+            self._display_error("Ollama Connection Error", f"Could not connect to Ollama at {self.api_url}.\nPlease ensure Ollama is running.\nError: {str(e)}")
             return False
         except Exception as e:
-            messagebox.showerror("Ollama Error", f"An unexpected error occurred while checking Ollama: {str(e)}")
+            self._display_error("Ollama Error", f"An unexpected error occurred while checking Ollama: {str(e)}")
             return False
 
-    def extract_invoice_data_from_text(self, text_content_list):
+    def extract_invoice_data_from_text(self, text_content_list, app_ui_for_errors=None): # app_ui_for_errors is for direct calls if needed
         """
         Sends text content to Ollama to extract invoice data using a JSON prompt.
         Args:
@@ -80,14 +95,17 @@ Text content:
                 return extracted_data
             else:
                 # print(f"Ollama API Error: {response.status_code}\n{response.text}") # For debugging
-                # Consider raising an exception or returning a more specific error object
+                self._display_error("Ollama API Error", f"Ollama API Error: {response.status_code}\n{response.text}")
                 return None
-        except json.JSONDecodeError as e:
-            # print(f"JSON Decode Error: {e}. Response: {ollama_response_json_str}") # For debugging
+        except json.JSONDecodeError as e_json:
+            # print(f"JSON Decode Error: {e_json}. Response: {ollama_response_json_str}") # For debugging
+            self._display_error("Ollama JSON Error", f"Failed to parse JSON response from Ollama: {e_json}.\nRaw response: {ollama_response_json_str}")
             return None
-        except requests.exceptions.RequestException as e:
-            # print(f"Ollama Request Exception: {e}") # For debugging
+        except requests.exceptions.RequestException as e_req:
+            # print(f"Ollama Request Exception: {e_req}") # For debugging
+            self._display_error("Ollama Connection Error", f"Could not connect to Ollama API at {self.api_url}.\nError: {e_req}")
             return None
-        except Exception as e:
-            # print(f"Unexpected error in Ollama client: {e}") # For debugging
+        except Exception as e_gen:
+            # print(f"Unexpected error in Ollama client: {e_gen}") # For debugging
+            self._display_error("Ollama Client Error", f"An unexpected error occurred in Ollama client: {e_gen}")
             return None

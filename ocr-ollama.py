@@ -691,11 +691,7 @@ def extract_text_from_pdf(pdf_path: str,
             self.update_status(f"Calling Ollama API ({self.invoice_ollama_model}) for invoice data...")
             
             prompt_template = """
-            请从以下文本中按顺序提取这些信息，只返回信息内容，每行一个，不要其他任何文字，其中购买方再左上角，销售方：
-            第1行：购买方名称
-            ... (rest of the detailed invoice prompt) ...
-            第19行：发票类型（只返回“普通发票”或“专用发票”）
-            文本内容：
+            请从以下文本中按顺序提取这些信息，只返回信息内容，每行一个，不要其他任何文字，其中购买方再左上角，交付物清单：
             {document_text}
             """ # Prompt kept concise here for brevity in this review
             full_prompt = prompt_template.format(document_text=text_content_str)
@@ -708,10 +704,7 @@ def extract_text_from_pdf(pdf_path: str,
                 
                 print("--- Invoice Ollama API Extraction Results ---")
                 display_titles = [
-                    "购买方名称", "购买方纳税人识别号", "购买方开户行", "购买方开户行账号",
-                    "发票代码", "货物或应税劳务、服务名称", "数量", "单价",
-                    "销售方名称", "销售方的纳税人识别号", "销售方开户行", "销售方开户行账号",
-                    "开票日期", "发票号码", "价税合计", "税率", "税额", "金额", "发票类型"
+                   "交付物"
                 ]
                 for i, title in enumerate(display_titles):
                     info_line = extracted_info_lines[i] if i < len(extracted_info_lines) else "N/A"
